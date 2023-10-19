@@ -2102,6 +2102,10 @@ class LoraLoaderMixin:
                 fuse_text_encoder_lora(self.text_encoder, lora_name)
             if hasattr(self, "text_encoder_2"):
                 fuse_text_encoder_lora(self.text_encoder_2, lora_name)
+    
+    def unfuse_all_lora(self):
+        while self.num_fused_loras > 0:
+            self.unfuse_lora()
 
     def unfuse_lora(self, unfuse_unet: bool = True, unfuse_text_encoder: bool = True, lora_name: str = None):
         r"""
