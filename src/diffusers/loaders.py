@@ -132,12 +132,11 @@ class PatchedLoraProjection(nn.Module):
             "w_up": w_up.cpu(),
             "w_down": w_down.cpu(),
             "lora_scale": lora_scale
-        }
-
-    def unfuse_all_lora(self):
+        }    
+    
+    def _unfuse_all_lora(self):
         for lora_name in list(self._fused_params.keys()):
             self._unfuse_lora(lora_name=lora_name)
-        
 
     def _unfuse_lora(self, lora_name: str = None):
         if len(self._fused_params) == 0:
@@ -674,7 +673,14 @@ class UNet2DConditionLoadersMixin:
     def fuse_lora(self, lora_scale=1.0, lora_name: str = None):
         self.lora_scale = lora_scale
         self.lora_name = lora_name
-        self.apply(self._fuse_lora_apply)
+        self.apply(self._fuse_lora_apply)            
+    
+    def unfuse_all_lora(self):
+        self.appy(self._unfuse_all_lora)
+
+    def _unfuse_all_lora(self, module):
+        if hasattr(module, "_unfuse_all_lora"):            
+            module._unfuse_all_lora()        
 
     def _fuse_lora_apply(self, module):
         if hasattr(module, "_fuse_lora"):
