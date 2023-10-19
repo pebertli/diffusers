@@ -134,11 +134,16 @@ class PatchedLoraProjection(nn.Module):
             "lora_scale": lora_scale
         }
 
+    def unfuse_all_lora(self):
+        for lora_name in list(self._fused_params.keys()):
+            self._unfuse_lora(lora_name=lora_name)
+        
+
     def _unfuse_lora(self, lora_name: str = None):
         if len(self._fused_params) == 0:
             return
 
-        if lora_name is None:
+        if lora_name is None:            
             unfuse_lora = self._fused_params.popitem(last=True)[1]
         else:
             if lora_name not in self._fused_params:
@@ -2065,10 +2070,10 @@ class LoraLoaderMixin:
         """
         if fuse_unet or fuse_text_encoder:
             self.num_fused_loras += 1
-            if self.num_fused_loras > 1:
-                logger.warn(
-                    "The current API is supported for operating with a single LoRA file. You are trying to load and fuse more than one LoRA which is not well-supported.",
-                )
+            # if self.num_fused_loras > 1:
+            #     logger.warn(
+            #         "The current API is supported for operating with a single LoRA file. You are trying to load and fuse more than one LoRA which is not well-supported.",
+            #     )
 
         if fuse_unet:
             self.unet.fuse_lora(lora_scale, lora_name)
