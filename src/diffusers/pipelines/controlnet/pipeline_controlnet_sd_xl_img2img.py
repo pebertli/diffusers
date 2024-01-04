@@ -1348,8 +1348,9 @@ class StableDiffusionXLControlNetImg2ImgPipeline(DiffusionPipeline, TextualInver
         image = self.image_processor.postprocess(image, output_type='pil')
 
         # Offload last model to CPU
-        if hasattr(self, "final_offload_hook") and self.final_offload_hook is not None:
-            self.final_offload_hook.offload()
+        # if hasattr(self, "final_offload_hook") and self.final_offload_hook is not None:
+        #     self.final_offload_hook.offload()
+        self.maybe_free_model_hooks()
 
         if output_type == "both":
             return (image, latents)
