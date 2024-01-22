@@ -784,7 +784,11 @@ class StableDiffusionXLControlNetPipeline(
             )
 
         if latents is None:
-            latents = randn_tensor(shape, generator=generator, device=device, dtype=dtype)
+            if isinstance(generator, list):
+                d = generator[0].device
+            else:
+                d = generator.device
+            latents = randn_tensor(shape, generator=generator, device=d, dtype=dtype)
         else:
             latents = latents.to(device)
 
