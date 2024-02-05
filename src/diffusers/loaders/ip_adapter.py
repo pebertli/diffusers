@@ -249,7 +249,7 @@ class IPAdapterMixin:
                     )
                 attn_processor.scale = scale
 
-    def unload_ip_adapter(self):
+    def unload_ip_adapter(self, all=False):
         """
         Unloads the IP Adapter weights
 
@@ -261,17 +261,19 @@ class IPAdapterMixin:
         >>> ...
         ```
         """
-        # remove CLIP image encoder
-        if hasattr(self, "image_encoder") and getattr(self, "image_encoder", None) is not None:
-            self.image_encoder = None
-            self.register_to_config(image_encoder=[None, None])
+        if all:
+            # remove CLIP image encoder
+            if hasattr(self, "image_encoder") and getattr(self, "image_encoder", None) is not None:
+                self.image_encoder = None
+                self.register_to_config(image_encoder=[None, None])
 
-        # remove feature extractor only when safety_checker is None as safety_checker uses
-        # the feature_extractor later
-        if not hasattr(self, "safety_checker"):
-            if hasattr(self, "feature_extractor") and getattr(self, "feature_extractor", None) is not None:
-                self.feature_extractor = None
-                self.register_to_config(feature_extractor=[None, None])
+            # remove feature extractor only when safety_checker is None as safety_checker uses
+            # the feature_extractor later
+            if not hasattr(self, "safety_checker"):
+                # remove feature extractor
+                if hasattr(self, "feature_extractor") and getattr(self, "feature_extractor", None) is not None:
+                    self.feature_extractor = None
+                    self.register_to_config(feature_extractor=[None, None])
 
         # remove hidden encoder
         self.unet.encoder_hid_proj = None

@@ -35,6 +35,7 @@ from ...loaders import (
     IPAdapterMixin,
     StableDiffusionXLLoraLoaderMixin,
     TextualInversionLoaderMixin,
+    FromSingleFileMixin
 )
 from ...models import AutoencoderKL, ControlNetModel, ImageProjection, UNet2DConditionModel
 from ...models.attention_processor import (
@@ -162,6 +163,7 @@ class StableDiffusionXLControlNetImg2ImgPipeline(
     TextualInversionLoaderMixin,
     StableDiffusionXLLoraLoaderMixin,
     IPAdapterMixin,
+    FromSingleFileMixin
 ):
     r"""
     Pipeline for image-to-image generation using Stable Diffusion XL with ControlNet guidance.
@@ -1600,10 +1602,13 @@ class StableDiffusionXLControlNetImg2ImgPipeline(
         if self.watermark is not None:
             image = self.watermark.apply_watermark(image)
 
-        image = self.image_processor.postprocess(image, output_type=output_type)
+        image = self.image_processor.postprocess(image, output_type='pil')
 
         # Offload all models
         self.maybe_free_model_hooks()
+
+        if output_type == "both":
+            return (image, latents)
 
         if not return_dict:
             return (image,)

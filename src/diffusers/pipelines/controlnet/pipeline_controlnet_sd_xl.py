@@ -821,7 +821,11 @@ class StableDiffusionXLControlNetPipeline(
             )
 
         if latents is None:
-            latents = randn_tensor(shape, generator=generator, device=device, dtype=dtype)
+            if isinstance(generator, list):
+                d = generator[0].device
+            else:
+                d = generator.device
+            latents = randn_tensor(shape, generator=generator, device=d, dtype=dtype)
         else:
             latents = latents.to(device)
 
@@ -1443,10 +1447,13 @@ class StableDiffusionXLControlNetPipeline(
             if self.watermark is not None:
                 image = self.watermark.apply_watermark(image)
 
-            image = self.image_processor.postprocess(image, output_type=output_type)
+            image = self.image_processor.postprocess(image, output_type='pil')
 
         # Offload all models
         self.maybe_free_model_hooks()
+
+        if output_type == "both":
+            return (image, latents)
 
         if not return_dict:
             return (image,)
