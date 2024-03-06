@@ -29,7 +29,7 @@ from packaging import version
 
 from torch import nn
 
-from .models.modeling_utils import _LOW_CPU_MEM_USAGE_DEFAULT, load_model_dict_into_meta
+from ..models.modeling_utils import _LOW_CPU_MEM_USAGE_DEFAULT, load_model_dict_into_meta
 from .utils import (
     DIFFUSERS_CACHE,
     HF_HUB_OFFLINE,
@@ -40,7 +40,7 @@ from .utils import (
     is_transformers_available,
     logging,
 )
-from .utils.import_utils import BACKENDS_MAPPING
+from ..utils.import_utils import BACKENDS_MAPPING
 
 
 if is_transformers_available():
