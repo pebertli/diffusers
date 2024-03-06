@@ -22,7 +22,7 @@ from typing import Callable, Dict, List, Optional, Union
 import requests
 import safetensors
 import torch
-from huggingface_hub import model_info
+from huggingface_hub import model_info, hf_hub_download
 from huggingface_hub.constants import HF_HUB_OFFLINE
 from huggingface_hub.utils import validate_hf_hub_args
 from packaging import version
@@ -30,13 +30,10 @@ from packaging import version
 from torch import nn
 
 from ..models.modeling_utils import _LOW_CPU_MEM_USAGE_DEFAULT, load_model_dict_into_meta
-from .utils import (
-    DIFFUSERS_CACHE,
-    HF_HUB_OFFLINE,
+from ..utils import (
     _get_model_file,
     deprecate,
     is_accelerate_available,
-    is_omegaconf_available,
     is_transformers_available,
     logging,
 )
@@ -68,7 +65,7 @@ CUSTOM_DIFFUSION_WEIGHT_NAME_SAFE = "pytorch_custom_diffusion_weights.safetensor
 class PatchedLoraProjection(nn.Module):
     def __init__(self, regular_linear_layer, lora_scale=1, network_alpha=None, rank=4, dtype=None, fused_params=None):
         super().__init__()
-        from .models.lora import LoRALinearLayer
+        from ..models.lora import LoRALinearLayer
 
         self.regular_linear_layer = regular_linear_layer
 
@@ -316,16 +313,16 @@ class UNet2DConditionLoadersMixin:
                 information.
 
         """
-        from .models.attention_processor import (
+        from ..models.attention_processor import (
             CustomDiffusionAttnProcessor,
         )
-        from .models.lora import LoRACompatibleConv, LoRACompatibleLinear, LoRAConv2dLayer, LoRALinearLayer
+        from ..models.lora import LoRACompatibleConv, LoRACompatibleLinear, LoRAConv2dLayer, LoRALinearLayer
 
-        cache_dir = kwargs.pop("cache_dir", DIFFUSERS_CACHE)
+        cache_dir = kwargs.pop("cache_dir", cache_dir)
         force_download = kwargs.pop("force_download", False)
         resume_download = kwargs.pop("resume_download", False)
         proxies = kwargs.pop("proxies", None)
-        local_files_only = kwargs.pop("local_files_only", HF_HUB_OFFLINE)
+        local_files_only = kwargs.pop("local_files_only", local_files_only)
         use_auth_token = kwargs.pop("use_auth_token", None)
         revision = kwargs.pop("revision", None)
         subfolder = kwargs.pop("subfolder", None)
@@ -613,7 +610,7 @@ class UNet2DConditionLoadersMixin:
             safe_serialization (`bool`, *optional*, defaults to `True`):
                 Whether to save the model using `safetensors` or the traditional PyTorch way with `pickle`.
         """
-        from .models.attention_processor import (
+        from ..models.attention_processor import (
             CustomDiffusionAttnProcessor,
             CustomDiffusionAttnProcessor2_0,
             CustomDiffusionXFormersAttnProcessor,
@@ -700,7 +697,7 @@ class UNet2DConditionLoadersMixin:
 
 
 def load_textual_inversion_state_dicts(pretrained_model_name_or_paths, **kwargs):
-    cache_dir = kwargs.pop("cache_dir", DIFFUSERS_CACHE)
+    cache_dir = kwargs.pop("cache_dir", cache_dir)
     force_download = kwargs.pop("force_download", False)
     resume_download = kwargs.pop("resume_download", False)
     proxies = kwargs.pop("proxies", None)
@@ -1825,7 +1822,7 @@ class LoraLoaderMixin:
 
     @classmethod
     def save_lora_weights(
-        self,
+        cls,
         save_directory: Union[str, os.PathLike],
         unet_lora_layers: Dict[str, Union[torch.nn.Module, torch.Tensor]] = None,
         text_encoder_lora_layers: Dict[str, torch.nn.Module] = None,
@@ -1879,7 +1876,7 @@ class LoraLoaderMixin:
             state_dict.update(pack_weights(transformer_lora_layers, "transformer"))
 
         # Save the model
-        self.write_lora_layers(
+        cls.write_lora_layers(
             state_dict=state_dict,
             save_directory=save_directory,
             is_main_process=is_main_process,
@@ -2309,11 +2306,11 @@ class FromSingleFileMixin:
         ```
         """
         # import here to avoid circular dependency
-        from .pipelines.stable_diffusion.convert_from_ckpt import download_from_original_stable_diffusion_ckpt
+        from ..pipelines.stable_diffusion.convert_from_ckpt import download_from_original_stable_diffusion_ckpt
 
         original_config_file = kwargs.pop("original_config_file", None)
         config_files = kwargs.pop("config_files", None)
-        cache_dir = kwargs.pop("cache_dir", DIFFUSERS_CACHE)
+        cache_dir = kwargs.pop("cache_dir", cache_dir)
         resume_download = kwargs.pop("resume_download", False)
         force_download = kwargs.pop("force_download", False)
         proxies = kwargs.pop("proxies", None)
@@ -2352,8 +2349,8 @@ class FromSingleFileMixin:
             "StableDiffusionControlNetImg2ImgPipeline",
             "StableDiffusionControlNetInpaintPipeline",
         ]:
-            from .models.controlnet import ControlNetModel
-            from .pipelines.controlnet.multicontrolnet import MultiControlNetModel
+            from ..models.controlnet import ControlNetModel
+            from ..pipelines.controlnet.multicontrolnet import MultiControlNetModel
 
             # Model type will be inferred from the checkpoint.
             if not isinstance(controlnet, (ControlNetModel, MultiControlNetModel)):
@@ -2514,21 +2511,21 @@ class FromOriginalVAEMixin:
         model = AutoencoderKL.from_single_file(url)
         ```
         """
-        if not is_omegaconf_available():
-            raise ValueError(BACKENDS_MAPPING["omegaconf"][1])
+        # if not is_omegaconf_available():
+        #     raise ValueError(BACKENDS_MAPPING["omegaconf"][1])
 
         from omegaconf import OmegaConf
 
-        from .models import AutoencoderKL
+        from ..models import AutoencoderKL
 
         # import here to avoid circular dependency
-        from .pipelines.stable_diffusion.convert_from_ckpt import (
+        from ..pipelines.stable_diffusion.convert_from_ckpt import (
             convert_ldm_vae_checkpoint,
             create_vae_diffusers_config,
         )
 
         config_file = kwargs.pop("config_file", None)
-        cache_dir = kwargs.pop("cache_dir", DIFFUSERS_CACHE)
+        cache_dir = kwargs.pop("cache_dir", cache_dir)
         resume_download = kwargs.pop("resume_download", False)
         force_download = kwargs.pop("force_download", False)
         proxies = kwargs.pop("proxies", None)
@@ -2695,10 +2692,10 @@ class FromOriginalControlnetMixin:
         ```
         """
         # import here to avoid circular dependency
-        from .pipelines.stable_diffusion.convert_from_ckpt import download_controlnet_from_original_ckpt
+        from ..pipelines.stable_diffusion.convert_from_ckpt import download_controlnet_from_original_ckpt
 
         config_file = kwargs.pop("config_file", None)
-        cache_dir = kwargs.pop("cache_dir", DIFFUSERS_CACHE)
+        cache_dir = kwargs.pop("cache_dir", cache_dir)
         resume_download = kwargs.pop("resume_download", False)
         force_download = kwargs.pop("force_download", False)
         proxies = kwargs.pop("proxies", None)
