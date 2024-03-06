@@ -19,7 +19,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from ..loaders import text_encoder_attn_modules
+# from ..loaders import text_encoder_attn_modules
 from ..utils import deprecate, logging
 from ..utils.import_utils import is_transformers_available
 
