@@ -12,21 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
-# IMPORTANT:                                                      #
-###################################################################
-# ----------------------------------------------------------------#
-# This file is deprecated and will be removed soon                #
-# (as soon as PEFT will become a required dependency for LoRA)    #
-# ----------------------------------------------------------------#
-###################################################################
-
 from typing import Optional, Tuple, Union
+from collections import OrderedDict
 
 import torch
 import torch.nn.functional as F
 from torch import nn
 
+from ..loaders import PatchedLoraProjection, text_encoder_attn_modules, text_encoder_mlp_modules
 from ..utils import deprecate, logging
 from ..utils.import_utils import is_transformers_available
 
@@ -296,21 +289,26 @@ class LoRACompatibleConv(nn.Conv2d):
     """
 
     def __init__(self, *args, lora_layer: Optional[LoRAConv2dLayer] = None, **kwargs):
-        deprecation_message = "Use of `LoRACompatibleConv` is deprecated. Please switch to PEFT backend by installing PEFT: `pip install peft`."
-        deprecate("LoRACompatibleConv", "1.0.0", deprecation_message)
-
         super().__init__(*args, **kwargs)
         self.lora_layer = lora_layer
+        self._fused_params = OrderedDict()
 
     def set_lora_layer(self, lora_layer: Optional[LoRAConv2dLayer]):
-        deprecation_message = "Use of `set_lora_layer()` is deprecated. Please switch to PEFT backend by installing PEFT: `pip install peft`."
-        deprecate("set_lora_layer", "1.0.0", deprecation_message)
-
         self.lora_layer = lora_layer
 
-    def _fuse_lora(self, lora_scale: float = 1.0, safe_fusing: bool = False):
+    def _fuse_lora(self, lora_scale: float = 1.0, lora_name: str = None):
         if self.lora_layer is None:
             return
+
+        # make sure lora have a unique name
+        if lora_name is None:
+            lora_name = "unspecified"
+            unspecified_num = 0
+            while lora_name in self._fused_params:
+                lora_name = f"{lora_name}{unspecified_num+1}"
+                unspecified_num += 1
+        if lora_name in self._fused_params:
+            raise ValueError(f"LoRA with name {lora_name} already fused")
 
         dtype, device = self.weight.data.dtype, self.weight.data.device
 
@@ -324,41 +322,41 @@ class LoRACompatibleConv(nn.Conv2d):
         fusion = torch.mm(w_up.flatten(start_dim=1), w_down.flatten(start_dim=1))
         fusion = fusion.reshape((w_orig.shape))
         fused_weight = w_orig + (lora_scale * fusion)
-
-        if safe_fusing and torch.isnan(fused_weight).any().item():
-            raise ValueError(
-                "This LoRA weight seems to be broken. "
-                f"Encountered NaN values when trying to fuse LoRA weights for {self}."
-                "LoRA weights will not be fused."
-            )
-
         self.weight.data = fused_weight.to(device=device, dtype=dtype)
 
         # we can drop the lora layer now
         self.lora_layer = None
 
         # offload the up and down matrices to CPU to not blow the memory
-        self.w_up = w_up.cpu()
-        self.w_down = w_down.cpu()
-        self._lora_scale = lora_scale
+        self._fused_params[lora_name] = {
+            "w_up": w_up.cpu(),
+            "w_down": w_down.cpu(),
+            "lora_scale": lora_scale
+        }
 
-    def _unfuse_lora(self):
-        if not (getattr(self, "w_up", None) is not None and getattr(self, "w_down", None) is not None):
+    def _unfuse_lora(self, lora_name: str = None):
+        if len(self._fused_params) == 0:
             return
+
+        if lora_name is None:
+            unfuse_lora = self._fused_params.popitem(last=True)[1]
+        else:
+            if lora_name not in self._fused_params:
+                raise ValueError(f"LoRA with name {lora_name} not found")
+            unfuse_lora = self._fused_params.pop(lora_name)
 
         fused_weight = self.weight.data
         dtype, device = fused_weight.data.dtype, fused_weight.data.device
 
-        self.w_up = self.w_up.to(device=device).float()
-        self.w_down = self.w_down.to(device).float()
+        w_up = unfuse_lora["w_up"].to(device=device).float()
+        w_down = unfuse_lora["w_down"].to(device).float()
+        lora_scale = unfuse_lora["lora_scale"]
 
-        fusion = torch.mm(self.w_up.flatten(start_dim=1), self.w_down.flatten(start_dim=1))
+        fusion = torch.mm(w_up.flatten(start_dim=1), w_down.flatten(start_dim=1))
         fusion = fusion.reshape((fused_weight.shape))
-        unfused_weight = fused_weight.float() - (self._lora_scale * fusion)
+        unfused_weight = fused_weight.float() - (lora_scale * fusion)
         self.weight.data = unfused_weight.to(device=device, dtype=dtype)
 
-        self.w_up = None
-        self.w_down = None
 
     def forward(self, hidden_states: torch.Tensor, scale: float = 1.0) -> torch.Tensor:
         if self.padding_mode != "zeros":
@@ -370,11 +368,14 @@ class LoRACompatibleConv(nn.Conv2d):
         original_outputs = F.conv2d(
             hidden_states, self.weight, self.bias, self.stride, padding, self.dilation, self.groups
         )
-
         if self.lora_layer is None:
-            return original_outputs
+            # make sure to the functional Conv2D function as otherwise torch.compile's graph will break
+            # see: https://github.com/huggingface/diffusers/pull/4315
+            return F.conv2d(
+                hidden_states, self.weight, self.bias, self.stride, self.padding, self.dilation, self.groups
+            )
         else:
-            return original_outputs + (scale * self.lora_layer(hidden_states))
+            return super().forward(hidden_states) + (scale * self.lora_layer(hidden_states))
 
 
 class LoRACompatibleLinear(nn.Linear):
@@ -383,20 +384,26 @@ class LoRACompatibleLinear(nn.Linear):
     """
 
     def __init__(self, *args, lora_layer: Optional[LoRALinearLayer] = None, **kwargs):
-        deprecation_message = "Use of `LoRACompatibleLinear` is deprecated. Please switch to PEFT backend by installing PEFT: `pip install peft`."
-        deprecate("LoRACompatibleLinear", "1.0.0", deprecation_message)
-
         super().__init__(*args, **kwargs)
         self.lora_layer = lora_layer
+        self._fused_params = OrderedDict()
+
 
     def set_lora_layer(self, lora_layer: Optional[LoRALinearLayer]):
-        deprecation_message = "Use of `set_lora_layer()` is deprecated. Please switch to PEFT backend by installing PEFT: `pip install peft`."
-        deprecate("set_lora_layer", "1.0.0", deprecation_message)
         self.lora_layer = lora_layer
 
-    def _fuse_lora(self, lora_scale: float = 1.0, safe_fusing: bool = False):
+    def _fuse_lora(self, lora_scale=1.0, lora_name: str = None):
         if self.lora_layer is None:
             return
+
+        if lora_name is None:
+            lora_name = "unspecified"
+            unspecified_num = 0
+            while lora_name in self._fused_params:
+                lora_name = f"{lora_name}{unspecified_num+1}"
+                unspecified_num += 1
+        if lora_name in self._fused_params:
+            raise ValueError(f"LoRA with name {lora_name} already fused")
 
         dtype, device = self.weight.data.dtype, self.weight.data.device
 
@@ -408,39 +415,40 @@ class LoRACompatibleLinear(nn.Linear):
             w_up = w_up * self.lora_layer.network_alpha / self.lora_layer.rank
 
         fused_weight = w_orig + (lora_scale * torch.bmm(w_up[None, :], w_down[None, :])[0])
-
-        if safe_fusing and torch.isnan(fused_weight).any().item():
-            raise ValueError(
-                "This LoRA weight seems to be broken. "
-                f"Encountered NaN values when trying to fuse LoRA weights for {self}."
-                "LoRA weights will not be fused."
-            )
-
         self.weight.data = fused_weight.to(device=device, dtype=dtype)
 
         # we can drop the lora layer now
         self.lora_layer = None
 
         # offload the up and down matrices to CPU to not blow the memory
-        self.w_up = w_up.cpu()
-        self.w_down = w_down.cpu()
-        self._lora_scale = lora_scale
+        self._fused_params[lora_name] = {
+            "w_up": w_up.cpu(),
+            "w_down": w_down.cpu(),
+            "lora_scale": lora_scale
+        }
 
-    def _unfuse_lora(self):
-        if not (getattr(self, "w_up", None) is not None and getattr(self, "w_down", None) is not None):
+    def _unfuse_lora(self, lora_name: str = None):
+        if len(self._fused_params) == 0:
             return
+
+        if lora_name is None:
+            unfuse_lora = self._fused_params.popitem(last=True)[1]
+
+        else:
+            if lora_name not in self._fused_params:
+                raise ValueError(f"LoRA with name {lora_name} not found")
+            unfuse_lora = self._fused_params.pop(lora_name)
 
         fused_weight = self.weight.data
         dtype, device = fused_weight.dtype, fused_weight.device
 
-        w_up = self.w_up.to(device=device).float()
-        w_down = self.w_down.to(device).float()
+        w_up = unfuse_lora["w_up"].to(device=device).float()
+        w_down = unfuse_lora["w_down"].to(device).float()
+        lora_scale = unfuse_lora["lora_scale"]
 
-        unfused_weight = fused_weight.float() - (self._lora_scale * torch.bmm(w_up[None, :], w_down[None, :])[0])
+        unfused_weight = fused_weight.float() - (lora_scale * torch.bmm(w_up[None, :], w_down[None, :])[0])
         self.weight.data = unfused_weight.to(device=device, dtype=dtype)
 
-        self.w_up = None
-        self.w_down = None
 
     def forward(self, hidden_states: torch.Tensor, scale: float = 1.0) -> torch.Tensor:
         if self.lora_layer is None:
