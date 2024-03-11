@@ -43,6 +43,8 @@ from ...models.attention_processor import (
     LoRAAttnProcessor2_0,
     LoRAXFormersAttnProcessor,
     XFormersAttnProcessor,
+    IPAdapterAttnProcessor,
+    IPAdapterAttnProcessor2_0,
 )
 from ...models.lora import adjust_lora_scale_text_encoder
 from ...schedulers import KarrasDiffusionSchedulers
@@ -1016,6 +1018,18 @@ class StableDiffusionXLControlNetImg2ImgPipeline(
             self.vae.decoder.conv_in.to(dtype)
             self.vae.decoder.mid_block.to(dtype)
 
+    def set_ip_adapater_scale(self, scale: float):
+        for attn_processor in self.unet.attn_processors.values():
+            if isinstance(attn_processor, (IPAdapterAttnProcessor, IPAdapterAttnProcessor2_0)):
+                if not isinstance(scale, list):
+                    scale = [scale] * len(attn_processor.scale)
+                if len(attn_processor.scale) != len(scale):
+                    raise ValueError(
+                        f"`scale` should be a list of same length as the number if ip-adapters "
+                        f"Expected {len(attn_processor.scale)} but got {len(scale)}."
+                    )
+                attn_processor.scale = scale      
+
     # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.StableDiffusionPipeline.enable_freeu
     def enable_freeu(self, s1: float, s2: float, b1: float, b2: float):
         r"""Enables the FreeU mechanism as in https://arxiv.org/abs/2309.11497.
@@ -1485,7 +1499,13 @@ class StableDiffusionXLControlNetImg2ImgPipeline(
         add_text_embeds = add_text_embeds.to(device)
         add_time_ids = add_time_ids.to(device)
 
-        # 8. Denoising loop
+        # 8. Denoising loop        
+        ip_adapter_start = kwargs.get("ip_adapter_start", 0)
+        ip_adapter_end = kwargs.get("ip_adapter_end", 1)
+        ip_adapter_scale = kwargs.get("ip_adapter_scale", 0.9)    
+        ip_adapter_start = ip_adapter_start*num_inference_steps        
+        ip_adapter_end = ip_adapter_end*num_inference_steps
+        
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
@@ -1537,8 +1557,14 @@ class StableDiffusionXLControlNetImg2ImgPipeline(
                     mid_block_res_sample = torch.cat([torch.zeros_like(mid_block_res_sample), mid_block_res_sample])
 
                 if ip_adapter_image is not None:
-                    added_cond_kwargs["image_embeds"] = image_embeds
+                    if i >= ip_adapter_start and i <= ip_adapter_end:  
+                        self.set_ip_adapater_scale(ip_adapter_scale)
+                        added_cond_kwargs["image_embeds"] = image_embeds
 
+                    else:
+                        self.set_ip_adapater_scale(0.0)
+                        added_cond_kwargs["image_embeds"] = [torch.ones_like(image_embeds[0])]                                                                        
+                        
                 # predict the noise residual
                 noise_pred = self.unet(
                     latent_model_input,
